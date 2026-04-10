@@ -339,6 +339,9 @@ CONSTRUCTION_LAW_REQUIRED_ITEMS = [
     "契約に関する紛争の解決方法",
 ]
 
+# 後方互換エイリアス（contract_analyzer.py が使用）
+CONSTRUCTION_LAW_REQUIRED = CONSTRUCTION_LAW_REQUIRED_ITEMS
+
 
 CONTRACT_CHECK_ITEMS: list[ContractCheckItem] = [
     # --- 報酬・支払 ---
