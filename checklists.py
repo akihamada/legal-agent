@@ -1,1 +1,503 @@
-"""\n建築法規チェックリスト & 契約書レビュールール (checklists.py)\n\nLLM不使用。構造化されたルールセットで法規適合性と契約リスクを判定する。\n"""\n\nfrom dataclasses import dataclass, field\n\n\n# ===========================================================================\n# 建築法規チェック用データ構造\n# ===========================================================================\n\n@dataclass\nclass RegulationRule:\n    """法規チェックルール1件"""\n    category: str          # カテゴリ (集団規定, 単体規定 等)\n    subcategory: str       # サブカテゴリ\n    description: str       # チェック内容の説明\n    law_name: str          # 対象法令名\n    article: str           # 条番号\n    applicable_uses: list[str] = field(default_factory=list)  # 適用用途\n    applicable_zones: list[str] = field(default_factory=list) # 適用地域\n    min_area: float = 0    # 最小面積 (㎡) — 0 なら面積制限なし\n    min_floors: int = 0    # 最小階数 — 0 なら制限なし\n    min_height: float = 0  # 最小高さ (m) — 0 なら制限なし\n    note: str = ""         # 補足情報\n\n\n# ---------------------------------------------------------------------------\n# ゾーン分類\n# ---------------------------------------------------------------------------\nRESIDENTIAL_ZONES = [\n    "第一種低層住居専用地域", "第二種低層住居専用地域",\n    "第一種中高層住居専用地域", "第二種中高層住居専用地域",\n    "第一種住居地域", "第二種住居地域", "準住居地域",\n    "田園住居地域",\n]\n\nLOW_RISE_ZONES = [\n    "第一種低層住居専用地域", "第二種低層住居専用地域",\n    "田園住居地域",\n]\n\nCOMMERCIAL_ZONES = ["近隣商業地域", "商業地域"]\n\nINDUSTRIAL_ZONES = ["準工業地域", "工業地域", "工業専用地域"]\n\nALL_ZONES = RESIDENTIAL_ZONES + COMMERCIAL_ZONES + INDUSTRIAL_ZONES + ["無指定"]\n\nALL_USES = [\n    "住宅", "共同住宅", "事務所", "店舗", "ホテル", "旅館",\n    "病院", "診療所", "学校", "幼稚園", "保育所", "老人ホーム",\n    "工場", "倉庫", "自動車車庫", "飲食店", "劇場", "映画館",\n    "集会場", "展示場", "体育館", "図書館", "博物館", "美術館",\n]\n\n\n# ---------------------------------------------------------------------------\n# 法規チェックルール一覧\n# ---------------------------------------------------------------------------\nREGULATION_RULES: list[RegulationRule] = [\n    # ===== A. 集団規定 =====\n    RegulationRule(\n        category="A. 集団規定",\n        subcategory="用途制限",\n        description="用途地域内の建築物の用途制限",\n        law_name="建築基準法",\n        article="48",\n        applicable_zones=ALL_ZONES,\n    ),\n    RegulationRule(\n        category="A. 集団規定",\n        subcategory="容積率",\n        description="容積率の限度（指定容積率 + 前面道路幅員制限）",\n        law_name="建築基準法",\n        article="52",\n        applicable_zones=ALL_ZONES,\n    ),\n    RegulationRule(\n        category="A. 集団規定",\n        subcategory="建蔽率",\n        description="建蔽率の限度（角地緩和・防火緩和の確認含む）",\n        law_name="建築基準法",\n        article="53",\n        applicable_zones=ALL_ZONES,\n    ),\n    RegulationRule(\n        category="A. 集団規定",\n        subcategory="絶対高さ制限",\n        description="低層住居専用地域等の絶対高さ制限（10m/12m）",\n        law_name="建築基準法",\n        article="55",\n        applicable_zones=LOW_RISE_ZONES,\n    ),\n    RegulationRule(\n        category="A. 集団規定",\n        subcategory="斜線制限",\n        description="道路斜線・隣地斜線・北側斜線制限",\n        law_name="建築基準法",\n        article="56",\n        applicable_zones=ALL_ZONES,\n    ),\n    RegulationRule(\n        category="A. 集団規定",\n        subcategory="日影規制",\n        description="日影による中高層建築物の制限",\n        law_name="建築基準法",\n        article="56の2",\n        applicable_zones=RESIDENTIAL_ZONES + ["近隣商業地域", "準工業地域"],\n        min_height=10.0,\n        note="低層住居専用地域は軒高7m超 or 3階以上",\n    ),\n    RegulationRule(\n        category="A. 集団規定",\n        subcategory="外壁後退",\n        description="低層住居専用地域の外壁後退距離",\n        law_name="建築基準法",\n        article="54",\n        applicable_zones=LOW_RISE_ZONES,\n    ),\n    RegulationRule(\n        category="A. 集団規定",\n        subcategory="敷地と道路の関係",\n        description="接道義務（幅員4m以上の道路に2m以上接すること）",\n        law_name="建築基準法",\n        article="43",\n        applicable_zones=ALL_ZONES,\n    ),\n\n    # ===== B. 単体規定 =====\n    RegulationRule(\n        category="B. 単体規定",\n        subcategory="構造耐力",\n        description="構造耐力上の安全性（ルート判定含む）",\n        law_name="建築基準法",\n        article="20",\n        note="高さ60m超: 大臣認定、高さ60m以下: ルート1/2/3",\n    ),\n    RegulationRule(\n        category="B. 単体規定",\n        subcategory="防火・耐火",\n        description="耐火建築物・準耐火建築物の要求",\n        law_name="建築基準法",\n        article="21",\n        note="主要構造部の耐火性能",\n    ),\n    RegulationRule(\n        category="B. 単体規定",\n        subcategory="特殊建築物の防火",\n        description="特殊建築物の防火要件（用途・階数・面積）",\n        law_name="建築基準法",\n        article="27",\n    ),\n    RegulationRule(\n        category="B. 単体規定",\n        subcategory="採光",\n        description="居室の採光（住宅1/7、学校1/5 等）",\n        law_name="建築基準法",\n        article="28",\n    ),\n    RegulationRule(\n        category="B. 単体規定",\n        subcategory="換気",\n        description="居室の換気（24時間換気義務化含む）",\n        law_name="建築基準法",\n        article="28",\n        note="シックハウス対策: 建基法28条の2",\n    ),\n    RegulationRule(\n        category="B. 単体規定",\n        subcategory="天井高",\n        description="居室の天井高（2.1m以上）",\n        law_name="建築基準法施行令",\n        article="21",\n    ),\n    RegulationRule(\n        category="B. 単体規定",\n        subcategory="床高・防湿",\n        description="最下階の居室の床高さ・防湿措置",\n        law_name="建築基準法施行令",\n        article="22",\n    ),\n    RegulationRule(\n        category="B. 単体規定",\n        subcategory="階段",\n        description="階段の幅・けあげ・踏面の寸法",\n        law_name="建築基準法施行令",\n        article="23",\n    ),\n    RegulationRule(\n        category="B. 単体規定",\n        subcategory="避難経路",\n        description="廊下の幅、直通階段、2方向避難",\n        law_name="建築基準法施行令",\n        article="119",\n        note="施行令117条〜128条の5で避難規定全般",\n    ),\n    RegulationRule(\n        category="B. 単体規定",\n        subcategory="排煙設備",\n        description="排煙設備の設置義務",\n        law_name="建築基準法施行令",\n        article="126の2",\n        note="延床500㎡超の場合等",\n    ),\n    RegulationRule(\n        category="B. 単体規定",\n        subcategory="非常用照明",\n        description="非常用の照明装置",\n        law_name="建築基準法施行令",\n        article="126の4",\n    ),\n    RegulationRule(\n        category="B. 単体規定",\n        subcategory="内装制限",\n        description="内装制限（特殊建築物・大規模建築物等）",\n        law_name="建築基準法施行令",\n        article="128の4",\n    ),\n\n    # ===== C. 防災・消防 =====\n    RegulationRule(\n        category="C. 防災・消防",\n        subcategory="消火設備",\n        description="消火器・屋内消火栓・スプリンクラー設備",\n        law_name="消防法施行令",\n        article="10",\n        note="消防令10条(消火器)、11条(屋内消火栓)、12条(スプリンクラー)",\n    ),\n    RegulationRule(\n        category="C. 防災・消防",\n        subcategory="自動火災報知設備",\n        description="自動火災報知設備の設置義務",\n        law_name="消防法施行令",\n        article="21",\n    ),\n    RegulationRule(\n        category="C. 防災・消防",\n        subcategory="避難器具",\n        description="避難器具の設置義務",\n        law_name="消防法施行令",\n        article="25",\n    ),\n    RegulationRule(\n        category="C. 防災・消防",\n        subcategory="非常用進入口",\n        description="非常用の進入口（3階以上の建築物）",\n        law_name="建築基準法施行令",\n        article="126の6",\n        min_floors=3,\n    ),\n    RegulationRule(\n        category="C. 防災・消防",\n        subcategory="耐震改修",\n        description="耐震改修促進法に基づく義務",\n        law_name="建築物の耐震改修の促進に関する法律",\n        article="14",\n        note="特定建築物の耐震診断義務（1981年以前の旧耐震基準）",\n    ),\n\n    # ===== D. 省エネ・環境・福祉 =====\n    RegulationRule(\n        category="D. 省エネ・環境・福祉",\n        subcategory="省エネ適合義務",\n        description="省エネ基準への適合義務（300㎡以上）",\n        law_name="建築物のエネルギー消費性能の向上等に関する法律",\n        article="11",\n        min_area=300,\n        note="2025年4月〜全建築物に省エネ基準適合義務化",\n    ),\n    RegulationRule(\n        category="D. 省エネ・環境・福祉",\n        subcategory="バリアフリー",\n        description="バリアフリー法に基づく義務基準",\n        law_name="高齢者、障害者等の移動等の円滑化の促進に関する法律",\n        article="14",\n        min_area=2000,\n        applicable_uses=["ホテル", "旅館", "病院", "店舗", "飲食店",\n                         "劇場", "映画館", "集会場", "展示場",\n                         "老人ホーム", "体育館"],\n        note="特別特定建築物(2000㎡超)は義務基準",\n    ),\n    RegulationRule(\n        category="D. 省エネ・環境・福祉",\n        subcategory="緑化率",\n        description="都市緑地法に基づく緑化率義務",\n        law_name="都市緑地法",\n        article="35",\n        note="緑化地域指定がある場合に適用",\n    ),\n    RegulationRule(\n        category="D. 省エネ・環境・福祉",\n        subcategory="景観法",\n        description="景観計画区域内の制限",\n        law_name="景観法",\n        article="16",\n        note="景観計画区域内の場合のみ適用",\n    ),\n\n    # ===== E. その他 =====\n    RegulationRule(\n        category="E. その他",\n        subcategory="建築士資格",\n        description="設計資格の確認（一級・二級・木造建築士）",\n        law_name="建築士法",\n        article="3",\n        note="高さ13m/軒高9m超 or 延床300㎡超 or 3階以上等",\n    ),\n    RegulationRule(\n        category="E. その他",\n        subcategory="駐車場附置義務",\n        description="駐車場法に基づく附置義務",\n        law_name="駐車場法",\n        article="20",\n        note="自治体条例で具体基準が定まる",\n    ),\n    RegulationRule(\n        category="E. その他",\n        subcategory="境界距離",\n        description="民法234条: 建築物は境界から50cm以上離す",\n        law_name="民法",\n        article="234",\n    ),\n    RegulationRule(\n        category="E. その他",\n        subcategory="文化財保護",\n        description="埋蔵文化財包蔵地の確認・届出",\n        law_name="文化財保護法",\n        article="93",\n        note="周知の埋蔵文化財包蔵地の場合は着工60日前に届出",\n    ),\n    RegulationRule(\n        category="E. その他",\n        subcategory="旅館業法",\n        description="ホテル・旅館の営業許可要件",\n        law_name="旅館業法",\n        article="3",\n        applicable_uses=["ホテル", "旅館"],\n    ),\n]\n\n\n# ===========================================================================\n# 契約書チェック用\n# ===========================================================================\n\n@dataclass\nclass ContractCheckItem:\n    """契約書チェック項目"""\n    category: str\n    item: str\n    description: str\n    risk_keywords: list[str]    # リスクを示すキーワード\n    required_keywords: list[str] = field(default_factory=list)  # 必須キーワード\n    risk_level: str = "中"      # 高/中/低\n    advice: str = ""\n\n\n# ---------------------------------------------------------------------------\n# 建設業法19条 必須記載事項\n# ---------------------------------------------------------------------------\nCONSTRUCTION_LAW_REQUIRED = [\n    "工事内容",\n    "請負代金の額",\n    "工事着手の時期",\n    "工事完成の時期",\n    "請負代金の支払の時期",\n    "請負代金の支払の方法",\n    "設計変更",\n    "工事の施工",\n    "天災その他不可抗力",\n    "価格等の変動",\n    "損害の負担",\n    "瑕疵担保責任",  # 契約不適合責任\n    "紛争の解決",\n]\n\n\n# ---------------------------------------------------------------------------\n# 契約書チェックルール\n# ---------------------------------------------------------------------------\nCONTRACT_CHECK_ITEMS: list[ContractCheckItem] = [\n    # === 報酬・支払 ===\n    ContractCheckItem(\n        category="報酬・支払",\n        item="報酬額の明記",\n        description="設計報酬の額が具体的に記載されているか",\n        risk_keywords=[],\n        required_keywords=["報酬", "設計料", "委託料", "請負代金", "対価", "業務委託費"],\n        risk_level="高",\n        advice="報酬額が不明確な場合、後日の紛争原因になります",\n    ),\n    ContractCheckItem(\n        category="報酬・支払",\n        item="支払条件",\n        description="支払時期・方法が明記されているか",\n        risk_keywords=["支払いを留保", "無期限", "成功報酬のみ"],\n        required_keywords=["支払", "振込", "期日", "期限"],\n        risk_level="高",\n        advice="着手金・中間金・完了時の3段階支払が一般的",\n    ),\n    ContractCheckItem(\n        category="報酬・支払",\n        item="遅延損害金",\n        description="支払遅延時の遅延損害金率、上限制限の有無",\n        risk_keywords=["年14.6%を超える", "年20%", "制限なし"],\n        required_keywords=["遅延損害金", "遅延利息"],\n        risk_level="中",\n        advice="法定利率(年3%)〜年14.6%が一般的",\n    ),\n\n    # === 業務範囲 ===\n    ContractCheckItem(\n        category="業務範囲",\n        item="業務範囲の明確化",\n        description="設計業務の具体的範囲が定義されているか",\n        risk_keywords=["その他一切の業務", "甲が指示する全ての", "無制限に"],\n        required_keywords=["業務範囲", "業務内容", "委託業務", "設計業務"],\n        risk_level="高",\n        advice="基本設計・実施設計・工事監理の範囲を明確に区分",\n    ),\n    ContractCheckItem(\n        category="業務範囲",\n        item="追加業務の取扱い",\n        description="追加業務発生時の協議・報酬規定があるか",\n        risk_keywords=["追加報酬は発生しない", "全て含まれる"],\n        required_keywords=["追加業務", "変更", "追加報酬"],\n        risk_level="高",\n        advice="設計変更・追加業務は書面による変更契約が必要",\n    ),\n\n    # === 責任・担保 ===\n    ContractCheckItem(\n        category="責任・担保",\n        item="瑕疵担保責任（契約不適合責任）",\n        description="不適合責任の期間・範囲・免責事項",\n        risk_keywords=[\n            "一切の責任を負わない", "免責", "責任を負担しない",\n            "10年を超える", "期間制限なし",\n        ],\n        required_keywords=["瑕疵", "契約不適合", "担保責任", "不適合"],\n        risk_level="高",\n        advice="引渡しから2年〜5年が一般的。民法改正後は『契約不適合責任』",\n    ),\n    ContractCheckItem(\n        category="責任・担保",\n        item="損害賠償の範囲",\n        description="損害賠償の上限・範囲が適切か",\n        risk_keywords=[\n            "逸失利益を含む", "間接損害を含む", "特別損害を含む",\n            "無制限", "上限なし",\n        ],\n        required_keywords=["損害賠償", "損害"],\n        risk_level="高",\n        advice="損害賠償の上限を報酬額に限定する条項が望ましい",\n    ),\n    ContractCheckItem(\n        category="責任・担保",\n        item="免責条項",\n        description="一方的に不利な免責条項がないか",\n        risk_keywords=[\n            "一切の責任を免除", "いかなる場合も", "理由の如何を問わず免責",\n        ],\n        required_keywords=[],\n        risk_level="高",\n        advice="一方的な免責は消費者契約法・民法上の制限あり",\n    ),\n\n    # === 知的財産 ===\n    ContractCheckItem(\n        category="知的財産",\n        item="著作権の帰属",\n        description="設計図書の著作権の帰属が明記されているか",\n        risk_keywords=[\n            "著作権は甲に帰属", "全ての権利を譲渡",\n            "著作者人格権を行使しない",\n        ],\n        required_keywords=["著作権", "知的財産"],\n        risk_level="高",\n        advice="設計図書の著作権は設計者に帰属するのが原則（著作権法）",\n    ),\n    ContractCheckItem(\n        category="知的財産",\n        item="成果物の利用範囲",\n        description="設計成果物の利用目的・範囲の制限",\n        risk_keywords=["目的外の利用を自由に", "第三者への譲渡自由"],\n        required_keywords=["成果物", "図面", "設計図書"],\n        risk_level="中",\n        advice="流用・転用時の承諾と追加報酬を規定",\n    ),\n\n    # === 契約解除 ===\n    ContractCheckItem(\n        category="契約解除",\n        item="解除条件",\n        description="契約解除の条件と手続きが適切か",\n        risk_keywords=[\n            "甲はいつでも解除できる", "催告なく解除",\n            "乙からの解除は不可",\n        ],\n        required_keywords=["解除", "解約", "終了"],\n        risk_level="高",\n        advice="双方同等の解除権と催告手続きが必要",\n    ),\n    ContractCheckItem(\n        category="契約解除",\n        item="解除時の精算",\n        description="中途解約時の出来高精算・報酬返還規定",\n        risk_keywords=[\n            "既払金を返還", "一切の精算なし", "違約金全額",\n        ],\n        required_keywords=["精算", "出来高", "既払"],\n        risk_level="高",\n        advice="出来高に応じた精算と既払金の処理を明記",\n    ),\n\n    # === 紛争解決 ===\n    ContractCheckItem(\n        category="紛争解決",\n        item="紛争解決条項",\n        description="裁判管轄・仲裁条項の確認",\n        risk_keywords=["甲の所在地を管轄する", "仲裁のみ"],\n        required_keywords=["管轄", "裁判所", "紛争", "仲裁", "調停"],\n        risk_level="中",\n        advice="合意管轄裁判所を明記。建設工事紛争審査会の活用も検討",\n    ),\n\n    # === 秘密保持 ===\n    ContractCheckItem(\n        category="秘密保持",\n        item="守秘義務",\n        description="秘密保持条項の範囲と期間",\n        risk_keywords=["永久に", "無期限", "退職後も全て"],\n        required_keywords=["秘密", "守秘", "機密", "情報管理"],\n        risk_level="中",\n        advice="期間は契約終了後2〜5年が一般的",\n    ),\n\n    # === 建設業法 ===\n    ContractCheckItem(\n        category="建設業法",\n        item="建設業法19条必須事項",\n        description="建設業法で定める契約書必須記載事項の網羅性",\n        risk_keywords=[],\n        required_keywords=CONSTRUCTION_LAW_REQUIRED,\n        risk_level="高",\n        advice="建設工事の請負契約は建設業法19条の16項目が必須",\n    ),\n]\n\n\n# ===========================================================================\n# 判例検索用キーワードセット\n# ===========================================================================\n\nCASE_LAW_CATEGORIES = {\n    "設計瑕疵": [\n        "設計瑕疵", "設計ミス", "設計不良", "構造計算", "構造安全性",\n        "耐震性能", "設計図書", "設計者責任", "相当の注意義務",\n    ],\n    "施工不良": [\n        "施工不良", "手抜き工事", "施工瑕疵", "工事瑕疵",\n        "施工者の責任", "下請関係", "品質管理",\n    ],\n    "契約紛争": [\n        "請負代金", "追加工事", "設計変更", "工期遅延",\n        "解除", "出来高", "損害賠償", "契約不適合",\n    ],\n    "近隣紛争": [\n        "日照権", "日影", "眺望権", "プライバシー",\n        "騒音", "振動", "境界", "越境",\n    ],\n    "建築確認": [\n        "建築確認", "確認取消", "建築基準法違反",\n        "用途地域", "容積率", "建蔽率", "高さ制限",\n    ],\n}\n\nCASE_LAW_SEARCH_KEYWORDS = [\n    "建築基準法", "設計瑕疵", "施工不良", "工事請負",\n    "建築紛争", "請負代金", "瑕疵担保", "構造計算",\n    "耐震", "日照権", "建築確認",\n]\n
+"""
+法規チェック・契約書レビュー用チェックリスト定義 (checklists.py)
+
+建築法規のルール定義、契約書チェック項目、判例カテゴリなどの
+構造化データを一元管理する。
+"""
+
+from dataclasses import dataclass, field
+from typing import Optional
+
+
+# ---------------------------------------------------------------------------
+# 用途地域定数
+# ---------------------------------------------------------------------------
+LOW_RISE_ZONES = [
+    "第一種低層住居専用地域",
+    "第二種低層住居専用地域",
+]
+
+MID_RISE_ZONES = [
+    "第一種中高層住居専用地域",
+    "第二種中高層住居専用地域",
+]
+
+RESIDENTIAL_ZONES = LOW_RISE_ZONES + MID_RISE_ZONES + [
+    "第一種住居地域",
+    "第二種住居地域",
+    "準住居地域",
+    "田園住居地域",
+]
+
+COMMERCIAL_ZONES = [
+    "近隣商業地域",
+    "商業地域",
+]
+
+INDUSTRIAL_ZONES = [
+    "準工業地域",
+    "工業地域",
+    "工業専用地域",
+]
+
+ALL_ZONES = (
+    LOW_RISE_ZONES
+    + MID_RISE_ZONES
+    + [
+        "第一種住居地域",
+        "第二種住居地域",
+        "準住居地域",
+        "田園住居地域",
+    ]
+    + COMMERCIAL_ZONES
+    + INDUSTRIAL_ZONES
+    + ["指定なし"]
+)
+
+ALL_USES = [
+    "住宅",
+    "共同住宅",
+    "事務所",
+    "店舗",
+    "ホテル",
+    "旅館",
+    "病院",
+    "診療所",
+    "学校",
+    "保育所",
+    "老人ホーム",
+    "倉庫",
+    "工場",
+    "危険物貯蔵施設",
+    "集会場",
+    "映画館",
+    "飲食店",
+    "その他",
+]
+
+
+# ---------------------------------------------------------------------------
+# 法規チェックルール
+# ---------------------------------------------------------------------------
+@dataclass
+class RegulationRule:
+    """法規チェックの1ルール定義"""
+    category: str
+    subcategory: str
+    description: str
+    law_name: str
+    article: str
+    applicable_zones: list[str] = field(default_factory=list)
+    applicable_uses: list[str] = field(default_factory=list)
+    min_area: float = 0.0
+    min_floors: int = 0
+    min_height: float = 0.0
+    note: str = ""
+
+
+REGULATION_RULES: list[RegulationRule] = [
+    # --- A. 集団規定 ---
+    RegulationRule(
+        category="A. 集団規定",
+        subcategory="用途制限",
+        description="用途地域における建築物の用途制限",
+        law_name="建築基準法",
+        article="48",
+        note="別表第二に基づく用途制限の詳細確認が必要",
+    ),
+    RegulationRule(
+        category="A. 集団規定",
+        subcategory="容積率",
+        description="容積率の制限",
+        law_name="建築基準法",
+        article="52",
+        note="前面道路幅員による容積率制限を含む",
+    ),
+    RegulationRule(
+        category="A. 集団規定",
+        subcategory="建蔽率",
+        description="建蔽率の制限",
+        law_name="建築基準法",
+        article="53",
+        note="角地緩和・防火地域内耐火建築物の緩和あり",
+    ),
+    RegulationRule(
+        category="A. 集団規定",
+        subcategory="絶対高さ制限",
+        description="低層住居専用地域における絶対高さ制限",
+        law_name="建築基準法",
+        article="55",
+        applicable_zones=LOW_RISE_ZONES,
+        note="10m（条例で12mの場合あり）",
+    ),
+    RegulationRule(
+        category="A. 集団規定",
+        subcategory="道路斜線制限",
+        description="前面道路からの斜線制限",
+        law_name="建築基準法",
+        article="56",
+        note="用途地域により適用距離・勾配が異なる",
+    ),
+    RegulationRule(
+        category="A. 集団規定",
+        subcategory="隣地斜線制限",
+        description="隣地境界線からの斜線制限",
+        law_name="建築基準法",
+        article="56",
+        note="20mまたは31mを超える部分に適用",
+    ),
+    RegulationRule(
+        category="A. 集団規定",
+        subcategory="北側斜線制限",
+        description="北側隣地境界線からの斜線制限",
+        law_name="建築基準法",
+        article="56",
+        applicable_zones=LOW_RISE_ZONES + MID_RISE_ZONES,
+        note="低層住居：5m+1.25勾配 / 中高層住居：10m+1.25勾配",
+    ),
+    RegulationRule(
+        category="A. 集団規定",
+        subcategory="日影規制",
+        description="日影による中高層建築物の高さ制限",
+        law_name="建築基準法",
+        article="56の2",
+        applicable_zones=RESIDENTIAL_ZONES + ["近隣商業地域", "準工業地域"],
+        note="対象区域・測定面・規制時間は自治体条例による",
+    ),
+    RegulationRule(
+        category="A. 集団規定",
+        subcategory="接道義務",
+        description="建築物の敷地は道路に2m以上接しなければならない",
+        law_name="建築基準法",
+        article="43",
+        note="特定行政庁の許可で例外あり",
+    ),
+
+    # --- B. 単体規定 ---
+    RegulationRule(
+        category="B. 単体規定",
+        subcategory="構造耐力",
+        description="構造耐力上主要な部分の安全性",
+        law_name="建築基準法",
+        article="20",
+        note="高さ・規模に応じて構造計算のルートが異なる",
+    ),
+    RegulationRule(
+        category="B. 単体規定",
+        subcategory="防火・耐火",
+        description="耐火建築物・準耐火建築物の要求",
+        law_name="建築基準法",
+        article="27",
+        note="用途・規模・地域により耐火性能要求が異なる",
+    ),
+    RegulationRule(
+        category="B. 単体規定",
+        subcategory="採光",
+        description="居室の採光に必要な開口部",
+        law_name="建築基準法",
+        article="28",
+        note="居室の床面積の1/7以上（住宅）",
+    ),
+    RegulationRule(
+        category="B. 単体規定",
+        subcategory="換気",
+        description="居室の換気に必要な開口部",
+        law_name="建築基準法",
+        article="28",
+        note="床面積の1/20以上（機械換気の場合を除く）",
+    ),
+    RegulationRule(
+        category="B. 単体規定",
+        subcategory="天井高",
+        description="居室の天井高さ",
+        law_name="建築基準法施行令",
+        article="21",
+        note="2.1m以上（平均天井高さ）",
+    ),
+    RegulationRule(
+        category="B. 単体規定",
+        subcategory="階段寸法",
+        description="階段の蹴上・踏面・幅の制限",
+        law_name="建築基準法施行令",
+        article="23",
+        note="階段の種類（直通階段等）と用途により基準が異なる",
+    ),
+    RegulationRule(
+        category="B. 単体規定",
+        subcategory="避難階段",
+        description="避難階段・特別避難階段の設置",
+        law_name="建築基準法施行令",
+        article="122",
+        min_floors=3,
+        note="5階以上の場合は特別避難階段が必要",
+    ),
+    RegulationRule(
+        category="B. 単体規定",
+        subcategory="排煙設備",
+        description="排煙設備の設置",
+        law_name="建築基準法施行令",
+        article="126の2",
+        min_area=500.0,
+        note="延床面積500㎡超の特殊建築物等に必要",
+    ),
+    RegulationRule(
+        category="B. 単体規定",
+        subcategory="非常用照明",
+        description="非常用照明装置の設置",
+        law_name="建築基準法施行令",
+        article="126の4",
+        note="特殊建築物・3階以上の階等に必要",
+    ),
+
+    # --- C. 消防法 ---
+    RegulationRule(
+        category="C. 消防法",
+        subcategory="消火器具",
+        description="消火器具の設置義務",
+        law_name="消防法施行令",
+        article="10",
+        note="延面積150㎡以上の特定防火対象物に設置",
+    ),
+    RegulationRule(
+        category="C. 消防法",
+        subcategory="自動火災報知設備",
+        description="自動火災報知設備の設置義務",
+        law_name="消防法施行令",
+        article="21",
+        note="用途・規模に応じて設置基準が異なる",
+    ),
+    RegulationRule(
+        category="C. 消防法",
+        subcategory="スプリンクラー",
+        description="スプリンクラー設備の設置義務",
+        law_name="消防法施行令",
+        article="12",
+        note="11階以上・規模一定以上の場合に設置",
+    ),
+    RegulationRule(
+        category="C. 消防法",
+        subcategory="非常用進入口",
+        description="非常用進入口の設置",
+        law_name="建築基準法施行令",
+        article="126の6",
+        min_floors=3,
+        note="3階以上の階に設置（代替進入口で代替可）",
+    ),
+
+    # --- D. 省エネ・バリアフリー ---
+    RegulationRule(
+        category="D. 省エネ・環境",
+        subcategory="省エネ適合義務",
+        description="建築物省エネ法に基づく省エネ基準適合義務",
+        law_name="建築物のエネルギー消費性能の向上等に関する法律",
+        article="11",
+        min_area=10.0,
+        note="2025年以降は全ての新築に適合義務化",
+    ),
+    RegulationRule(
+        category="D. 省エネ・環境",
+        subcategory="バリアフリー義務",
+        description="特別特定建築物のバリアフリー基準適合義務",
+        law_name="高齢者、障害者等の移動等の円滑化の促進に関する法律",
+        article="14",
+        min_area=2000.0,
+        note="特別特定建築物で2000㎡以上が義務対象",
+    ),
+]
+
+
+# ---------------------------------------------------------------------------
+# 契約書レビュー チェックリスト
+# ---------------------------------------------------------------------------
+@dataclass
+class ContractCheckItem:
+    """契約書チェック項目"""
+    category: str
+    item: str
+    description: str
+    risk_level: str  # "高" / "中" / "低"
+    check_keywords: list[str] = field(default_factory=list)
+    risk_keywords: list[str] = field(default_factory=list)
+    advice: str = ""
+
+
+# 建設業法19条 必須記載事項
+CONSTRUCTION_LAW_REQUIRED_ITEMS = [
+    "工事内容",
+    "請負代金の額",
+    "工事着手の時期及び工事完成の時期",
+    "工事を施工しない日又は時間帯の定めをするときは、その内容",
+    "請負代金の全部又は一部の前金払又は出来形部分に対する支払の定めをするときは、その支払の時期及び方法",
+    "当事者の一方から設計変更又は工事着手の延期若しくは工事の全部若しくは一部の中止の申出があった場合における工期の変更、請負代金の額の変更又は損害の負担及びそれらの額の算定方法に関する定め",
+    "天災その他不可抗力による工期の変更又は損害の負担及びその額の算定方法に関する定め",
+    "価格等の変動若しくは変更に基づく請負代金の額又は工事内容の変更",
+    "工事の施工により第三者が損害を受けた場合における賠償金の負担に関する定め",
+    "注文者が工事の全部又は一部の完成を確認するための検査の時期及び方法並びに引渡しの時期",
+    "工事完成後における請負代金の支払の時期及び方法",
+    "工事の目的物の瑕疵を担保すべき責任又は当該責任の履行に関して講ずべき保証保険契約の締結その他の措置に関する定めをするときは、その内容",
+    "各当事者の履行の遅滞その他債務の不履行の場合における遅延利息、違約金その他の損害金",
+    "契約に関する紛争の解決方法",
+]
+
+
+CONTRACT_CHECK_ITEMS: list[ContractCheckItem] = [
+    # --- 報酬・支払 ---
+    ContractCheckItem(
+        category="報酬・支払",
+        item="報酬額の明記",
+        description="報酬額が明確に記載されているか",
+        risk_level="高",
+        check_keywords=["報酬", "対価", "委託料", "設計料", "請負代金", "金額"],
+        advice="報酬額は具体的な金額を明記し、消費税の取扱いも記載すること",
+    ),
+    ContractCheckItem(
+        category="報酬・支払",
+        item="支払条件",
+        description="支払時期・方法が明確か",
+        risk_level="高",
+        check_keywords=["支払", "振込", "期日", "期限", "出来高", "前払"],
+        advice="支払時期（着手時・中間・完了時）と方法を明確にすること",
+    ),
+    ContractCheckItem(
+        category="報酬・支払",
+        item="追加費用の取扱い",
+        description="設計変更や追加業務の費用負担が明確か",
+        risk_level="高",
+        check_keywords=["追加", "変更", "増額", "精算", "実費"],
+        risk_keywords=["追加費用は乙の負担", "追加報酬は生じない", "一切の追加費用"],
+        advice="設計変更時の追加費用算定方法と承認プロセスを定めること",
+    ),
+
+    # --- 業務範囲 ---
+    ContractCheckItem(
+        category="業務範囲",
+        item="業務内容の特定",
+        description="業務範囲が具体的に定義されているか",
+        risk_level="高",
+        check_keywords=["業務内容", "業務範囲", "委託業務", "成果物", "別紙"],
+        advice="業務内容は別紙で詳細に定義し、含まれるもの・含まれないものを明記",
+    ),
+    ContractCheckItem(
+        category="業務範囲",
+        item="工期・納期",
+        description="工期・納期が明確に規定されているか",
+        risk_level="高",
+        check_keywords=["工期", "納期", "期間", "着手", "完了", "完成"],
+        advice="工期延長の条件と手続きを明確にすること",
+    ),
+
+    # --- 責任・保証 ---
+    ContractCheckItem(
+        category="責任・保証",
+        item="瑕疵担保責任",
+        description="瑕疵担保期間と範囲が適切か",
+        risk_level="高",
+        check_keywords=["瑕疵", "担保", "契約不適合", "保証", "補修"],
+        risk_keywords=["瑕疵担保期間を1年", "瑕疵担保責任を負わない", "一切の責任を負わない"],
+        advice="民法の原則（知ってから1年・引渡しから10年）を下回る場合は要注意",
+    ),
+    ContractCheckItem(
+        category="責任・保証",
+        item="損害賠償",
+        description="損害賠償の範囲と上限が適切か",
+        risk_level="高",
+        check_keywords=["損害賠償", "賠償", "損害", "免責", "上限"],
+        risk_keywords=["損害賠償の上限を報酬額", "間接損害を除く", "一切の責任を負わない", "免責"],
+        advice="損害賠償の上限は契約金額と同額以上が望ましい",
+    ),
+    ContractCheckItem(
+        category="責任・保証",
+        item="知的財産権",
+        description="成果物の著作権・知的財産権の帰属が明確か",
+        risk_level="中",
+        check_keywords=["著作権", "知的財産", "権利", "帰属", "利用権"],
+        risk_keywords=["著作権は甲に帰属", "一切の権利を譲渡"],
+        advice="設計図書の著作権は設計者に帰属するのが原則（著作権法）",
+    ),
+
+    # --- 契約管理 ---
+    ContractCheckItem(
+        category="契約管理",
+        item="解除条項",
+        description="契約解除の条件と手続きが適切か",
+        risk_level="高",
+        check_keywords=["解除", "解約", "終了", "催告", "通知"],
+        risk_keywords=["甲はいつでも解除できる", "催告なく解除", "即時解除"],
+        advice="一方的な解除条項は避け、催告後一定期間での解除を定めること",
+    ),
+    ContractCheckItem(
+        category="契約管理",
+        item="不可抗力",
+        description="不可抗力条項が適切に定められているか",
+        risk_level="中",
+        check_keywords=["不可抗力", "天災", "地震", "台風", "疫病", "パンデミック"],
+        advice="不可抗力の定義と、発生時の費用負担・工期延長の取扱いを定めること",
+    ),
+    ContractCheckItem(
+        category="契約管理",
+        item="紛争解決",
+        description="紛争解決方法が定められているか",
+        risk_level="中",
+        check_keywords=["紛争", "裁判", "仲裁", "調停", "管轄", "協議"],
+        advice="建設工事紛争審査会の利用も検討すること",
+    ),
+    ContractCheckItem(
+        category="契約管理",
+        item="再委託・下請制限",
+        description="再委託・下請けの条件が明確か",
+        risk_level="中",
+        check_keywords=["再委託", "下請", "外注", "第三者", "委託先"],
+        risk_keywords=["再委託を禁ずる", "一切の再委託"],
+        advice="再委託の可否、事前承認の要否、責任の所在を明確にすること",
+    ),
+    ContractCheckItem(
+        category="契約管理",
+        item="秘密保持",
+        description="秘密保持義務が適切に定められているか",
+        risk_level="中",
+        check_keywords=["秘密", "機密", "守秘", "情報管理", "個人情報"],
+        advice="秘密情報の定義と、契約終了後の義務存続期間を定めること",
+    ),
+    ContractCheckItem(
+        category="契約管理",
+        item="遅延損害金",
+        description="遅延損害金の利率が適切か",
+        risk_level="中",
+        check_keywords=["遅延", "延滞", "利息", "年率", "日歩"],
+        risk_keywords=["年率14.6%", "年率20%"],
+        advice="遅延損害金は年率3〜6%程度が一般的（民法の法定利率は年3%）",
+    ),
+]
+
+
+# ---------------------------------------------------------------------------
+# 判例カテゴリ
+# ---------------------------------------------------------------------------
+CASE_LAW_CATEGORIES: dict[str, list[str]] = {
+    "設計瑕疵": [
+        "設計瑕疵", "設計ミス", "設計の誤り", "設計監理", "監理義務",
+        "注意義務", "確認義務", "設計者の責任",
+    ],
+    "施工不良": [
+        "施工不良", "手抜き工事", "施工瑕疵", "工事瑕疵",
+        "施工者の責任", "下請関係", "品質管理",
+    ],
+    "契約紛争": [
+        "請負代金", "追加工事", "設計変更", "工期遅延",
+        "解除", "出来高", "損害賠償", "契約不適合",
+    ],
+    "近隣紛争": [
+        "日照権", "日影", "眺望権", "プライバシー",
+        "騒音", "振動", "境界", "越境",
+    ],
+    "建築確認": [
+        "建築確認", "確認取消", "建築基準法違反",
+        "用途地域", "容積率", "建蔽率", "高さ制限",
+    ],
+}
+
+CASE_LAW_SEARCH_KEYWORDS = [
+    "建築基準法", "設計瑕疵", "施工不良", "工事請負",
+    "建築紛争", "請負代金", "瑕疵担保", "構造計算",
+    "耐震", "日照権", "建築確認",
+]
